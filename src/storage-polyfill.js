@@ -1,55 +1,56 @@
-name: Deploy to GitHub Pages
+// Polyfills the `window.storage` API that Claude.ai artifacts provide,
+// backed by the browser's localStorage instead. This lets App.jsx run
+// unmodified outside of Claude.ai — on GitHub Pages, Vercel, Netlify,
+// or anywhere else.
+//
+// Note: localStorage is per-browser, per-device. Data won't sync across
+// devices or browsers. For that, you'd need a real backend/database —
+// this polyfill is meant to make the app "just work" for a single user
+// on a single device/browser, matching how the app behaved with personal
+// (non-shared) storage inside Claude.ai.
 
-# Runs automatically every time you push/upload changes to the main branch.
-# GitHub's own servers do the build — nothing needs to run on your computer.
+const PREFIX = "sustenance_storage__";
 
-on:
-  push:
-    branches: ["main"]
-  workflow_dispatch: # lets you manually re-run it from the Actions tab too
+function fullKey(key, shared) {
+  return `${PREFIX}${shared ? "shared" : "personal"}__${key}`;
+}
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+function stripPrefix(fullK, shared) {
+  const marker = `${PREFIX}${shared ? "shared" : "personal"}__`;
+  return fullK.startsWith(marker) ? fullK.slice(marker.length) : null;
+}
 
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
+if (typeof window !== "undefined" && !window.storage) {
+  window.storage = {
+    async get(key, shared = false) {
+      const raw = window.localStorage.getItem(fullKey(key, shared));
+      if (raw === null) {
+        throw new Error(`Key not found: ${key}`);
+      }
+      return { key, value: raw, shared };
+    },
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    async set(key, value, shared = false) {
+      window.localStorage.setItem(fullKey(key, shared), value);
+      return { key, value, shared };
+    },
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+    async delete(key, shared = false) {
+      window.localStorage.removeItem(fullKey(key, shared));
+      return { key, deleted: true, shared };
+    },
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build the site
-        run: npm run build
-
-      - name: Prepare GitHub Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload built site
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./dist
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+    async list(prefix = "", shared = false) {
+      const searchPrefix = fullKey(prefix, shared);
+      const keys = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith(searchPrefix)) {
+          const stripped = stripPrefix(k, shared);
+          if (stripped !== null) keys.push(stripped);
+        }
+      }
+      return { keys, prefix, shared };
+    },
+  };
+}
